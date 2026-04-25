@@ -57,4 +57,26 @@ end
     finally
         isfile(filename) && rm(filename)
     end
+
+    filename = tempname() * ".lp"
+    try
+        write(filename, """
+        Minimize
+         obj: x + 2 y
+        Subject To
+         cap: x + y <= 1
+         obj_2: 3 x + y = 0
+        Binaries
+         x y
+        End
+        """)
+        instance, sense = read_an_instance_from_a_lp_or_a_mps_file(filename, [:Min])
+        @test sense == [:Min, :Min]
+        @test instance isa BOBPInstance
+        @test instance.c1 == [1.0, 2.0]
+        @test instance.c2 == [3.0, 1.0]
+        @test any(i -> Matrix(instance.A)[i, :] == [-1.0, -1.0], axes(instance.A, 1))
+    finally
+        isfile(filename) && rm(filename)
+    end
 end

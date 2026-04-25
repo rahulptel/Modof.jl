@@ -137,11 +137,11 @@ function _append_constraints!(rows, cons_lb, cons_ub, model::JuMP.Model, vars, v
     return nothing
 end
 
-function _extract_linear_constraints(model::JuMP.Model, vars, var_to_index)
+function _extract_linear_constraints(model::JuMP.Model, vars, var_to_index, function_types)
     rows = Vector{Vector{Float64}}()
     cons_lb = Float64[]
     cons_ub = Float64[]
-    for F in (JuMP.AffExpr, JuMP.VariableRef)
+    for F in function_types
         for S in (MOI.LessThan{Float64}, MOI.GreaterThan{Float64}, MOI.EqualTo{Float64}, MOI.Interval{Float64})
             _append_constraints!(rows, cons_lb, cons_ub, model, vars, var_to_index, F, S)
         end
@@ -153,6 +153,9 @@ function _extract_linear_constraints(model::JuMP.Model, vars, var_to_index)
     end
     return A, cons_lb, cons_ub
 end
+
+_extract_linear_constraints(model::JuMP.Model, vars, var_to_index) =
+    _extract_linear_constraints(model, vars, var_to_index, (JuMP.AffExpr, JuMP.VariableRef))
 
 function _extract_variable_data(vars::Vector{JuMP.VariableRef})
     var_types = Symbol[]
@@ -268,19 +271,25 @@ function _read_jump_model_with_constraint_objectives(model::JuMP.Model, sense::V
     vars = JuMP.all_variables(model)
     var_to_index = _variable_map(vars)
     primary_coefficients, _ = _objective_coefficients(model, vars, var_to_index)
-    A, cons_lb, cons_ub = _extract_linear_constraints(model, vars, var_to_index)
+    A_aff, cons_lb_aff, cons_ub_aff =
+        _extract_linear_constraints(model, vars, var_to_index, (JuMP.AffExpr,))
+    A_var, cons_lb_var, cons_ub_var =
+        _extract_linear_constraints(model, vars, var_to_index, (JuMP.VariableRef,))
     length(sense) >= 1 || throw(ArgumentError("sense must contain at least the primary objective sense"))
     tail_objectives = length(sense) - 1
-    tail_objectives <= size(A, 1) || throw(ArgumentError("not enough trailing constraints to read as additional objectives"))
+    tail_objectives <= size(A_aff, 1) || throw(ArgumentError("not enough trailing affine constraints to read as additional objectives"))
     c = zeros(length(sense), length(vars))
     c[1, :] = primary_coefficients
     if tail_objectives > 0
-        first_tail = size(A, 1) - tail_objectives + 1
-        c[2:end, :] = A[first_tail:end, :]
-        A = A[1:first_tail-1, :]
-        cons_lb = cons_lb[1:first_tail-1]
-        cons_ub = cons_ub[1:first_tail-1]
+        first_tail = size(A_aff, 1) - tail_objectives + 1
+        c[2:end, :] = A_aff[first_tail:end, :]
+        A_aff = A_aff[1:first_tail-1, :]
+        cons_lb_aff = cons_lb_aff[1:first_tail-1]
+        cons_ub_aff = cons_ub_aff[1:first_tail-1]
     end
+    A = vcat(A_aff, A_var)
+    cons_lb = vcat(cons_lb_aff, cons_lb_var)
+    cons_ub = vcat(cons_ub_aff, cons_ub_var)
     return _instance_from_jump_data(model, c, copy(sense), A, cons_lb, cons_ub)
 end
 
